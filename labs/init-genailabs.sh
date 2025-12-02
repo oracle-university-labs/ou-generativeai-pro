@@ -58,10 +58,14 @@ echo "Setting up permissions for the Oracle data directory..."
 sudo chown -R 54321:54321 /home/opc/oradata
 sudo chmod -R 755 /home/opc/oradata
 
+# Logical name for the Oracle Database container (version-independent)
+DB_CONTAINER="26ai"
+echo "Oracle DB container name: $DB_CONTAINER"
+
 # Run the Oracle Database Free Edition container
 echo "Running Oracle Database container..."
 sudo podman run -d \
-    --name 23ai \
+    --name "$DB_CONTAINER" \
     --network=host \
     -e ORACLE_PWD=database123 \
     -v /home/opc/oradata:/opt/oracle/oradata:z \
@@ -76,7 +80,7 @@ sleep 20
 echo "$(date '+%Y-%m-%d %H:%M:%S') Checking if FREE (CDB root) is registered..."
 MAX_RETRIES=20
 for i in $(seq 1 $MAX_RETRIES); do
-  if sudo podman exec 23ai lsnrctl status | grep -q "FREE "; then
+  if sudo podman exec "$DB_CONTAINER" lsnrctl status | grep -q "FREE "; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') FREE service is registered with the listener."
     break
   fi
@@ -84,9 +88,9 @@ for i in $(seq 1 $MAX_RETRIES); do
   sleep 10
 done
 
-if ! sudo podman exec 23ai lsnrctl status | grep -q "FREEPDB1"; then
+if ! sudo podman exec "$DB_CONTAINER" lsnrctl status | grep -q "FREEPDB1"; then
   echo "$(date '+%Y-%m-%d %H:%M:%S') FREEPDB1 not registered after $MAX_RETRIES attempts. Forcing it open..."
-  sudo podman exec 23ai bash -lc "echo exit | sqlplus -S / as sysdba <<EOF
+  sudo podman exec "$DB_CONTAINER" bash -lc "echo exit | sqlplus -S / as sysdba <<EOF
   ALTER SYSTEM SET LOCAL_LISTENER = '(ADDRESS=(PROTOCOL=TCP)(HOST=127.0.0.1)(PORT=1521))' scope=both;
   ALTER SYSTEM REGISTER;
   ALTER PLUGGABLE DATABASE ALL OPEN;
@@ -99,7 +103,7 @@ fi
 
 # Run the SQL commands to configure the PDB
 echo "Configuring Oracle database in PDB (freepdb1)..."
-sudo podman exec -i 23ai bash <<EOF
+sudo podman exec -i "$DB_CONTAINER" bash <<EOF
 sqlplus -S / as sysdba <<EOSQL
 -- ensure PDB is open and switch context
 -- ALTER PLUGGABLE DATABASE FREEPDB1 OPEN IF NOT EXISTS;
@@ -115,7 +119,7 @@ EOF
 
 # Reconnect to CDB root to apply system-level changes
 echo "Switching to CDB root for system-level changes..."
-sudo podman exec -i 23ai bash <<EOF
+sudo podman exec -i "$DB_CONTAINER" bash <<EOF
 sqlplus -S / as sysdba <<EOSQL
 CREATE PFILE FROM SPFILE;
 ALTER SYSTEM SET vector_memory_size = 512M SCOPE=SPFILE;
@@ -130,7 +134,7 @@ EOSQL
 EOF
 
 echo "Final listener check:"
-podman exec -i 23ai bash -lc "lsnrctl services"
+sudo podman exec -i "$DB_CONTAINER" bash -lc "lsnrctl services"
 
 # Wait for Oracle to restart and apply memory changes
 sleep 10
@@ -157,7 +161,7 @@ EOF
 # Ensure .bashrc is sourced on login
 cat << EOF >> $HOME/.bash_profile
 if [ -f ~/.bashrc ]; then
-   source ~/.bashrc
+   source ~/.bashrc ]
 fi
 EOF
 
