@@ -108,13 +108,15 @@ def build_signer(config: dict):
     if config.get("security_token_file"):
         token_path = Path(config["security_token_file"]).expanduser()
         token = token_path.read_text().strip()
-        private_key = oci.signer.load_private_key_from_file(config["key_file"])
+        private_key = oci.signer.load_private_key_from_file(
+            str(Path(config["key_file"]).expanduser())
+        )
         return oci.auth.signers.SecurityTokenSigner(token, private_key)
     return oci.signer.Signer(
         tenancy=config["tenancy"],
         user=config["user"],
         fingerprint=config["fingerprint"],
-        private_key_file_location=config["key_file"],
+        private_key_file_location=str(Path(config["key_file"]).expanduser()),
     )
 
 

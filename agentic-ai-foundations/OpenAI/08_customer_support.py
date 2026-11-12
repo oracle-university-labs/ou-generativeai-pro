@@ -89,7 +89,7 @@ guardrail_checker = Agent(
     Invalid topics: personal advice, jokes, coding help, unrelated conversations.
     Return is_support_question=True ONLY for customer support topics.""",
     output_type=SupportCheck,
-    model="gpt-5.5",
+    model="gpt-4.1-mini",
 )
 
 

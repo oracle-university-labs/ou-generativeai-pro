@@ -49,15 +49,9 @@ load_dotenv()
 # MCP only changes WHERE tools come from,
 # not how the LLM reasons about them.
 
-from langchain.chat_models import init_chat_model
 from langchain_openai import ChatOpenAI
 
-# Change this line:
-# model = init_chat_model("openai:gpt-4o-mini")
-
-# To this:
-#model = init_chat_model("openai:gpt-4o-mini").bind(parallel_tool_calls=False)
-model = ChatOpenAI(model="gpt-5.5", parallel_tool_calls=False)
+model = ChatOpenAI(model="gpt-4o", parallel_tool_calls=False)
 
 
 # ─────────────────────────────────────────────
@@ -89,7 +83,7 @@ model = ChatOpenAI(model="gpt-5.5", parallel_tool_calls=False)
 #    The SAME server works with Claude, ChatGPT, Cursor, etc.
 
 from langchain_mcp_adapters.client import MultiServerMCPClient
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 
 
 async def main():
@@ -113,7 +107,7 @@ async def main():
     current_dir = os.path.dirname(os.path.abspath(__file__))
     server_path = os.path.join(current_dir, "mcp_math_server.py")
 
-    client = MultiServerMCPClient(
+    async with MultiServerMCPClient(
         {
             "math": {
                 # The MCP server to connect to
@@ -137,117 +131,87 @@ async def main():
             #     "transport": "http",       # Remote server
             # },
         }
-    )
+    ) as client:
 
-    # ─────────────────────────────────────────
-    # Discover Tools from the MCP Server
-    # ─────────────────────────────────────────
-    # This is where the magic happens!
-    # The client connects to the server, performs the MCP
-    # handshake, and auto-discovers all available tools.
-    # Each MCP tool is converted into a LangChain tool.
+        # ─────────────────────────────────────────
+        # Discover Tools from the MCP Server
+        # ─────────────────────────────────────────
+        # This is where the magic happens!
+        # The client connects to the server, performs the MCP
+        # handshake, and auto-discovers all available tools.
+        # Each MCP tool is converted into a LangChain tool.
 
-    tools = await client.get_tools()
-
-    print("=" * 55)
-    print("  🔌 MCP Agent — Tools discovered from MCP Server")
-    print("=" * 55)
-    print(f"\n📋 Found {len(tools)} tools from MCP server:\n")
-    for t in tools:
-        print(f"  🔧 {t.name}: {t.description[:60]}...")
-    print()
-
-    # ─────────────────────────────────────────
-    # STEP 3: Create the Agent
-    # ─────────────────────────────────────────
-    # ✅ SAME AS BEFORE — the agent creation is identical!
-    # The agent doesn't know or care that tools came from MCP.
-    # It just sees LangChain tools and uses them normally.
-    #
-    # ⚠️ IMPORTANT: parallel_tool_calls=False
-    #
-    # By default, newer OpenAI models (GPT-4o, GPT-4o-mini)
-    # try to call multiple tools at the same time (in parallel)
-    # to be faster. This causes WRONG ANSWERS for sequential
-    # math like "15 × 8, then ÷ 3" because the LLM calls
-    # multiply(15,8) AND divide(15,3) simultaneously instead
-    # of waiting for the multiply result first.
-    #
-    # Setting parallel_tool_calls=False forces the LLM to
-    # call tools one at a time, in the correct order.
-
-    agent = create_agent(
-        model,
-        tools=tools,        
-    )
-
-    # ─────────────────────────────────────────
-    # STEP 4: Run the Agent
-    # ─────────────────────────────────────────
-    # ✅ SAME AS BEFORE — the run function is identical.
-
-    async def run_agent(question: str):
-        """Run the agent and print the execution trace."""
-        print(f"🧑 User: {question}")
-        print("-" * 50)
-
-        result = await agent.ainvoke({
-            "messages": [("user", question)]
-        })
-
-        for msg in result["messages"]:
-            if msg.type == "human":
-                continue
-            elif msg.type == "ai":
-                if msg.tool_calls:
-                    for tc in msg.tool_calls:
-                        print(f"🤖 Agent thinks → calling: {tc['name']}({tc['args']})")
-                elif msg.content:
-                    print(f"🤖 Agent answer: {msg.content}")
-            elif msg.type == "tool":
-                # Extract clean result from MCP tool response
-                content = msg.content
-                # MCP returns structured content as a list of dicts
-                # e.g. [{'type': 'text', 'text': '120.0', ...}]
-                # Extract just the text value for clean display
-                if isinstance(content, list):
-                    texts = [item["text"] for item in content if isinstance(item, dict) and "text" in item]
-                    content = ", ".join(texts) if texts else str(content)
-                print(f"🔧 Tool result: {content}")
+        tools = await client.get_tools()
 
         print("=" * 55)
+        print("  🔌 MCP Agent — Tools discovered from MCP Server")
+        print("=" * 55)
+        print(f"\n📋 Found {len(tools)} tools from MCP server:\n")
+        for t in tools:
+            print(f"  🔧 {t.name}: {t.description[:60]}...")
         print()
 
-    # ─────────────────────────────────────────
-    # TEST CASES — Same tests, same results!
-    # ─────────────────────────────────────────
-    # The agent behavior is identical to first_agent.py.
-    # The ONLY difference is where the tools come from.
+        # ─────────────────────────────────────────
+        # STEP 3: Create the Agent
+        # ─────────────────────────────────────────
+        agent = create_react_agent(
+            model,
+            tools=tools,
+        )
 
-    # Simple: single tool call
-    await run_agent("What is 42 + 58?")
+        # ─────────────────────────────────────────
+        # STEP 4: Run the Agent
+        # ─────────────────────────────────────────
 
-    # Medium: multiple tool calls in sequence
-    # With parallel_tool_calls=False, this now correctly does:
-    #   Step 1: multiply(15, 8) → 120
-    #   Step 2: divide(120, 3) → 40  ✅ (not 24!)
-    await run_agent("What is 15 multiplied by 8, then divided by 3?")
+        async def run_agent(question: str):
+            """Run the agent and print the execution trace."""
+            print(f"🧑 User: {question}")
+            print("-" * 50)
 
-    # Complex: multi-step reasoning
-    await run_agent(
-        "I have a rectangle with width 12 and height 7. "
-        "What is its area, and what is the square root of that area?"
-    )
+            result = await agent.ainvoke({
+                "messages": [("user", question)]
+            })
 
-    # Edge case: error handling
-    await run_agent("What is 100 divided by 0?")
+            for msg in result["messages"]:
+                if msg.type == "human":
+                    continue
+                elif msg.type == "ai":
+                    if msg.tool_calls:
+                        for tc in msg.tool_calls:
+                            print(f"🤖 Agent thinks → calling: {tc['name']}({tc['args']})")
+                    elif msg.content:
+                        print(f"🤖 Agent answer: {msg.content}")
+                elif msg.type == "tool":
+                    content = msg.content
+                    if isinstance(content, list):
+                        texts = [item["text"] for item in content if isinstance(item, dict) and "text" in item]
+                        content = ", ".join(texts) if texts else str(content)
+                    print(f"🔧 Tool result: {content}")
 
-    print("✅ MCP Agent demo complete!")
-    print()
-    print("📝 KEY TAKEAWAY:")
-    print("   The agent code barely changed. What changed is WHERE")
-    print("   the tools live. They moved from local @tool decorators")
-    print("   to a shared MCP server that ANY AI app can use.")
+            print("=" * 55)
+            print()
+
+        # Simple: single tool call
+        await run_agent("What is 42 + 58?")
+
+        # Medium: multiple tool calls in sequence
+        await run_agent("What is 15 multiplied by 8, then divided by 3?")
+
+        # Complex: multi-step reasoning
+        await run_agent(
+            "I have a rectangle with width 12 and height 7. "
+            "What is its area, and what is the square root of that area?"
+        )
+
+        # Edge case: error handling
+        await run_agent("What is 100 divided by 0?")
+
+        print("✅ MCP Agent demo complete!")
+        print()
+        print("📝 KEY TAKEAWAY:")
+        print("   The agent code barely changed. What changed is WHERE")
+        print("   the tools live. They moved from local @tool decorators")
+        print("   to a shared MCP server that ANY AI app can use.")
 
 
 # ─────────────────────────────────────────────

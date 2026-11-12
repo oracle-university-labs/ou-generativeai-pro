@@ -26,7 +26,7 @@ agent = Agent(
     instructions="""You are a friendly history tutor. 
     You answer history questions clearly and concisely.
     Always include an interesting fun fact in your answers.""",
-    model="gpt-5.5",  
+    model="gpt-4o",
 )
 
 # ──────────────────────────────────────────────

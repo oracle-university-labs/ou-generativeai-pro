@@ -1,5 +1,5 @@
 """
-Module 03: Stateful Conversations
+Module 02: Stateful Conversations
 ===================================
 The Responses API can remember previous turns automatically.
 Just pass previous_response_id and it chains the conversation.
