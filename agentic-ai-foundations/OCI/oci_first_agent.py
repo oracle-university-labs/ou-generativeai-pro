@@ -34,16 +34,25 @@ from dotenv import load_dotenv
 #      "We keep the key out of the code in a .env file. This line finds that
 #       file sitting right next to the script, no matter where we run python
 #       from." Path(__file__) is this file; .parent is its folder.
-script_dir = Path(__file__).resolve().parent.resolve().parent
+script_dir = Path(__file__).resolve().parent
 load_dotenv(dotenv_path=script_dir / ".env")
 
 # Confirm the key loaded WITHOUT printing the key itself (never print secrets).
 print("OCI_GENAI_API_KEY found:", bool(os.getenv("OCI_GENAI_API_KEY")))
 
 # ─── Configuration ───────────────────────────────────────────────────────────
-OCI_REGION = os.getenv("REGION")          # <-- CHANGE to your region
-OCI_BASE_URL = (f"https://inference.generativeai.{OCI_REGION}"f".oci.oraclecloud.com/openai/v1")
-MODEL = os.getenv("MODEL_ID")       # strong reasoning model on OCI
+OCI_REGION = os.getenv("REGION")
+if not OCI_REGION:
+    print("ERROR: Set the REGION environment variable (e.g., 'us-chicago-1')")
+    exit(1)
+OCI_BASE_URL = (
+    f"https://inference.generativeai.{OCI_REGION}"
+    f".oci.oraclecloud.com/openai/v1"
+)
+MODEL = os.getenv("MODEL_ID")
+if not MODEL:
+    print("ERROR: Set the MODEL_ID environment variable")
+    exit(1)
 OCI_PROJECT_ID = os.getenv("PROJECT_ID")
 
 # ─── Create the Client ───────────────────────────────────────────────────────
@@ -187,8 +196,9 @@ def run_agent(client, question: str):
         tool_choice="required",
     )
 
+    MAX_ITERATIONS = 10
     iteration = 0
-    while True:
+    while iteration < MAX_ITERATIONS:
         iteration += 1
 
         # Did the model ask to call any tools this round?
@@ -204,8 +214,11 @@ def run_agent(client, question: str):
         tool_results = []
         for tc in tool_calls:
             func = TOOL_DISPATCH.get(tc.name)
-            args = json.loads(tc.arguments)
-            result = func(**args)
+            if func is None:
+                result = f"Error: unknown tool '{tc.name}'"
+            else:
+                args = json.loads(tc.arguments)
+                result = func(**args)
             print(f"  🔧 Step {iteration}: {tc.name}({args}) → {result}")
 
             # Package the result so the model can read it on the next round.
@@ -221,6 +234,7 @@ def run_agent(client, question: str):
             model=MODEL,
             previous_response_id=response.id,
             input=tool_results,
+            tools=MATH_TOOLS,
         )
 
     print("=" * 50)

@@ -76,15 +76,13 @@ import csv
 import json
 import os
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from langchain.agents import create_agent
 from langchain_core.messages import ToolMessage
 from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_openai import ChatOpenAI
-import os
-from pathlib import Path
+from langgraph.prebuilt import create_react_agent
 from dotenv import load_dotenv
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -257,7 +255,9 @@ def find_last_tool_result(messages, tool_name: str) -> str | None:
 
 async def main() -> None:
     tenancy_ocid = get_tenancy_ocid("DEFAULT")
-    today_utc = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    today_utc = datetime.now(timezone.utc).replace(
+        hour=0, minute=0, second=0, microsecond=0
+    ).strftime("%Y-%m-%dT%H:%M:%SZ")
 
     # ------------------------------------------------------------------
     # Register the MCP server.
@@ -267,7 +267,7 @@ async def main() -> None:
     # code path. Without it, oracle.oci-usage-mcp-server crashes with
     # KeyError: 'security_token_file' on API-key configs.
     # ------------------------------------------------------------------
-    mcp_client = MultiServerMCPClient(
+    async with MultiServerMCPClient(
         {
             "oci_usage": {
                 "command": "uvx",
@@ -281,72 +281,61 @@ async def main() -> None:
                 },
             },
         }
-    )
+    ) as mcp_client:
 
-    tools = await mcp_client.get_tools()
-    print(f"Loaded {len(tools)} tool(s) from the OCI Usage MCP server:")
-    for tool in tools:
-        first_line = tool.description.splitlines()[0] if tool.description else ""
-        print(f"  - {tool.name}: {first_line}")
-    print()
+        tools = await mcp_client.get_tools()
+        print(f"Loaded {len(tools)} tool(s) from the OCI Usage MCP server:")
+        for tool in tools:
+            first_line = tool.description.splitlines()[0] if tool.description else ""
+            print(f"  - {tool.name}: {first_line}")
+        print()
 
-    # ------------------------------------------------------------------
-    # Build the agent. parallel_tool_calls=False keeps the agent loop
-    # deterministic. The system prompt teaches the LLM the argument
-    # contract and explicitly forbids it from rendering tables itself.
-    # ------------------------------------------------------------------
-    llm = ChatOpenAI(model="gpt-5.5", parallel_tool_calls=False)
+        llm = ChatOpenAI(model="gpt-4o", parallel_tool_calls=False)
 
-    agent = create_agent(
-        model=llm,
-        tools=tools,
-        system_prompt=(
-            "You are an Oracle Cloud Infrastructure (OCI) cost-and-usage "
-            "assistant.\n\n"
-            f"The user's tenancy OCID is: {tenancy_ocid}\n"
-            f"Today's date in UTC is: {today_utc}\n\n"
-            "Use the get_summarized_usage tool to answer questions. "
-            "Required arguments:\n"
-            "  - tenant_id: the tenancy OCID above\n"
-            "  - start_time: ISO 8601, MUST be midnight UTC "
-            "(e.g. 2024-01-01T00:00:00Z)\n"
-            "  - end_time: ISO 8601, midnight UTC, exclusive\n"
-            "  - group_by: array of dimensions. Use [\"service\"] for "
-            "service breakdowns, [\"compartmentName\"] for per-compartment, "
-            "[\"skuName\"] for sku-level, or [] for a single total.\n"
-            "  - compartment_depth: integer, use 1 unless the user "
-            "specifically asks for child-compartment detail.\n"
-            "Optional: granularity (DAILY/MONTHLY/HOURLY/TOTAL), "
-            "query_type (COST or USAGE; default to COST for spend "
-            "questions, USAGE for consumption).\n\n"
-            "OUTPUT RULES:\n"
-            "Do NOT produce a numerical table or list of per-service or "
-            "per-day numbers in your reply. The application renders an "
-            "exact table from the raw tool result on its own. Your job "
-            "is to give a brief natural-language insight (2-4 sentences) "
-            "about what stands out: which service or day dominates, any "
-            "obvious trend, anything worth a closer look. If the result "
-            "is empty or the call fails, say so plainly - do not invent."
-        ),
-    )
+        agent = create_react_agent(
+            model=llm,
+            tools=tools,
+            system_prompt=(
+                "You are an Oracle Cloud Infrastructure (OCI) cost-and-usage "
+                "assistant.\n\n"
+                f"The user's tenancy OCID is: {tenancy_ocid}\n"
+                f"Today's date in UTC is: {today_utc}\n\n"
+                "Use the get_summarized_usage tool to answer questions. "
+                "Required arguments:\n"
+                "  - tenant_id: the tenancy OCID above\n"
+                "  - start_time: ISO 8601, MUST be midnight UTC "
+                "(e.g. 2024-01-01T00:00:00Z)\n"
+                "  - end_time: ISO 8601, midnight UTC, exclusive\n"
+                "  - group_by: array of dimensions. Use [\"service\"] for "
+                "service breakdowns, [\"compartmentName\"] for per-compartment, "
+                "[\"skuName\"] for sku-level, or [] for a single total.\n"
+                "  - compartment_depth: integer, use 1 unless the user "
+                "specifically asks for child-compartment detail.\n"
+                "Optional: granularity (DAILY/MONTHLY/HOURLY/TOTAL), "
+                "query_type (COST or USAGE; default to COST for spend "
+                "questions, USAGE for consumption).\n\n"
+                "OUTPUT RULES:\n"
+                "Do NOT produce a numerical table or list of per-service or "
+                "per-day numbers in your reply. The application renders an "
+                "exact table from the raw tool result on its own. Your job "
+                "is to give a brief natural-language insight (2-4 sentences) "
+                "about what stands out: which service or day dominates, any "
+                "obvious trend, anything worth a closer look. If the result "
+                "is empty or the call fails, say so plainly - do not invent."
+            ),
+        )
 
-    # ------------------------------------------------------------------
-    # Run the agent.
-    # ------------------------------------------------------------------
-    question = (
-        "Show me my OCI cost for the last 30 days as a daily breakdown by "
-        "service. I want to compare it to the OCI Cost Analysis console "
-        "with Granularity=Daily, Show=Cost, Group by=Service. After the "
-        "table, give me one or two sentences pointing out anything notable."
-    )
-    print(f"User: {question}\n")
+        question = (
+            "Show me my OCI cost for the last 30 days as a daily breakdown by "
+            "service. I want to compare it to the OCI Cost Analysis console "
+            "with Granularity=Daily, Show=Cost, Group by=Service. After the "
+            "table, give me one or two sentences pointing out anything notable."
+        )
+        print(f"User: {question}\n")
 
-    response = await agent.ainvoke({"messages": [("user", question)]})
-    messages = response["messages"]
+        response = await agent.ainvoke({"messages": [("user", question)]})
+        messages = response["messages"]
 
-    # ------------------------------------------------------------------
-    # Render deterministic table + CSV from the raw tool output.
-    # ------------------------------------------------------------------
     raw_tool_result = find_last_tool_result(messages, "get_summarized_usage")
 
     print("Daily cost by service (rendered from raw tool result)")
@@ -374,9 +363,6 @@ async def main() -> None:
             print(raw_tool_result)
     print()
 
-    # ------------------------------------------------------------------
-    # Show the agent's natural-language commentary below the table.
-    # ------------------------------------------------------------------
     final_message = messages[-1]
     print("Agent commentary:")
     print("-" * 60)

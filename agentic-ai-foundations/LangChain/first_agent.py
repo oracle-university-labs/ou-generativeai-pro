@@ -23,9 +23,11 @@ Setup:
 # This keeps secrets out of the code (best practice).
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-load_dotenv()  # Loads variables like OPENAI_API_KEY into environment
+script_dir = Path(__file__).resolve().parent
+load_dotenv(dotenv_path=script_dir / ".env")
 
 
 # -------------------------------------------------------
@@ -38,8 +40,7 @@ load_dotenv()  # Loads variables like OPENAI_API_KEY into environment
 
 from langchain.chat_models import init_chat_model
 
-# "gpt-5.5" is the latest model
-model = init_chat_model("openai:gpt-5.5")
+model = init_chat_model("openai:gpt-4o")
 
 
 # -------------------------------------------------------
@@ -117,10 +118,10 @@ print()
 #
 # You don't have to manually write the loop — the framework does it.
 
-from langchain.agents import create_agent
+from langgraph.prebuilt import create_react_agent
 
-agent = create_agent(
-    model=model,
+agent = create_react_agent(
+    model,
     tools=tools,
 )
 

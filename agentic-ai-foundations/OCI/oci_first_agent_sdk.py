@@ -94,9 +94,7 @@ def _create_oci_client():
     )
 
 
-# Create the client and disable tracing (OCI doesn't host OpenAI's trace backend)
-oci_client = _create_oci_client()
-set_tracing_disabled(True)
+oci_client = None
 
 
 class OciModelProvider(ModelProvider):
@@ -271,6 +269,10 @@ async def math_agent_example():
 # Main
 # =============================================================================
 async def main():
+    global oci_client
+    oci_client = _create_oci_client()
+    set_tracing_disabled(True)
+
     print()
     print("─" * 60)
     print("  OCI Enterprise AI Agents — Agents SDK Version")
